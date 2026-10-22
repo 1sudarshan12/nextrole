@@ -1,0 +1,35 @@
+import { z } from 'zod';
+export const STAGES = ['Saved', 'Applied', 'Screening', 'Interview', 'Offer', 'Closed'] as const;
+export type Stage = typeof STAGES[number];
+export const ACTIVE = ['Saved', 'Applied', 'Screening', 'Interview', 'Offer'];
+const date = z.string().refine(v => !v || (/^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v)) && new Date(v).toISOString().slice(0,10)===v), 'Enter a valid date');
+const url = z.string().max(2000).refine(v=>!v || /^https?:\/\//i.test(v),'Use a full http or https URL').refine(v=>!v || (()=>{try {new URL(v);return true;} catch{return false;}})(),'Enter a valid URL');
+export const jobSchema = z.object({
+ company:z.string().trim().min(1,'Company is required').max(120), title:z.string().trim().min(1,'Role title is required').max(180),
+ url, stage:z.enum(STAGES), location:z.string().max(180), remote:z.enum(['Worldwide','Nepal eligible','Check eligibility','Restricted']),
+ salaryMin:z.number().min(0).max(1e10).nullable(), salaryMax:z.number().min(0).max(1e10).nullable(), currency:z.enum(['NPR','USD','EUR','GBP','INR']), period:z.enum(['year','month']),
+ deadline:date, appliedDate:date, nextAction:z.string().max(300), actionDate:date, notes:z.string().max(12000),
+ tags:z.string().max(300), priority:z.enum(['High','Medium','Low']), scores:z.record(z.number().int().min(0).max(5)),
+}).refine(v=>v.salaryMin===null || v.salaryMax===null || v.salaryMax>=v.salaryMin,{message:'Maximum salary must be at least the minimum',path:['salaryMax']});
+export type JobInput=z.infer<typeof jobSchema>;
+export type Job=JobInput & {id:string;createdAt:string;updatedAt:string};
+export const criterionSchema=z.object({id:z.string().min(1).max(80),name:z.string().trim().min(1).max(60),weight:z.number().int().min(0).max(100)});
+export const settingsSchema=z.object({target:z.number().min(0).max(1e10),currency:z.enum(['NPR','USD','EUR','GBP','INR']),period:z.enum(['year','month']),criteria:z.array(criterionSchema).min(1).max(10)}).refine(v=>v.criteria.some(c=>c.weight>0),'At least one criterion needs a positive weight').refine(v=>new Set(v.criteria.map(c=>c.id)).size===v.criteria.length,'Criteria must be unique');
+export type Settings=z.infer<typeof settingsSchema>;
+export const DEFAULT_SETTINGS:Settings={target:200000,currency:'NPR',period:'month',criteria:[{id:'pay',name:'Compensation',weight:30},{id:'remote',name:'Remote flexibility',weight:25},{id:'skills',name:'Tech & role fit',weight:20},{id:'growth',name:'Career growth',weight:15},{id:'balance',name:'Work-life balance',weight:10}]};
+export const blankJob:JobInput={company:'',title:'',url:'',stage:'Saved',location:'',remote:'Check eligibility',salaryMin:null,salaryMax:null,currency:'USD',period:'year',deadline:'',appliedDate:'',nextAction:'',actionDate:'',notes:'',tags:'',priority:'Medium',scores:{}};
+export function today(){return new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Kathmandu'});}
+export function daysUntil(date:string,now=today()){if(!date)return null;return Math.round((Date.parse(date)-Date.parse(now))/86400000);}
+export function fitScore(job:Job,criteria:Settings['criteria']){const filled=criteria.filter(c=>c.weight>0&&(job.scores[c.id]||0)>0);const total=filled.reduce((s,c)=>s+c.weight,0);return total?Math.round(filled.reduce((s,c)=>s+job.scores[c.id]/5*c.weight,0)/total*100):null;}
+export function scoreCoverage(job:Job,criteria:Settings['criteria']){const active=criteria.filter(c=>c.weight>0);return `${active.filter(c=>(job.scores[c.id]||0)>0).length}/${active.length}`;}
+export function money(value:number|null,currency:string,period:string){if(value===null)return 'Not listed';return `${currency} ${new Intl.NumberFormat('en-US',{maximumFractionDigits:0,notation:value>=100000?'compact':'standard'}).format(value)}/${period==='month'?'mo':'yr'}`;}
+export function salaryLabel(job:Job){if(job.salaryMin===null&&job.salaryMax===null)return 'Salary not listed';if(job.salaryMin!==null&&job.salaryMax!==null&&job.salaryMin!==job.salaryMax)return `${job.currency} ${new Intl.NumberFormat('en-US',{notation:'compact',maximumFractionDigits:1}).format(job.salaryMin)}–${new Intl.NumberFormat('en-US',{notation:'compact',maximumFractionDigits:1}).format(job.salaryMax)}/${job.period==='month'?'mo':'yr'}`;return money(job.salaryMin??job.salaryMax,job.currency,job.period);}
+export type Action={id:string;jobId:string;title:string;company:string;date:string;kind:string;priority:number};
+export function nextActions(jobs:Job[]):Action[]{const actions:Action[]=[];for(const j of jobs.filter(j=>j.stage!=='Closed')){if(j.nextAction)actions.push({id:j.id+'action',jobId:j.id,title:j.nextAction,company:j.company,date:j.actionDate,kind:'Next step',priority:j.priority==='High'?0:1});if(j.deadline&&j.stage==='Saved')actions.push({id:j.id+'deadline',jobId:j.id,title:'Submit application',company:j.company,date:j.deadline,kind:'Deadline',priority:0});if(!j.nextAction&&!j.deadline)actions.push({id:j.id+'plan',jobId:j.id,title:j.stage==='Saved'?'Review role & plan application':'Set your next step',company:j.company,date:'',kind:'Plan ahead',priority:2});}return actions.sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999')||a.priority-b.priority);}
+export function demoJobs():Job[]{const now=today();const after=(d:number)=>new Date(Date.parse(now)+d*86400000).toISOString().slice(0,10);return [
+ {...blankJob,id:'demo1',company:'Orbit Labs',title:'Senior Frontend Engineer',stage:'Interview',location:'Remote · APAC',remote:'Nepal eligible',salaryMin:55000,salaryMax:75000,tags:'React, TypeScript, Next.js',priority:'High',appliedDate:after(-6),nextAction:'Prepare for the technical interview',actionDate:after(1),scores:{pay:5,remote:5,skills:5,growth:4,balance:4}},
+ {...blankJob,id:'demo2',company:'Forma',title:'Product Engineer',stage:'Applied',location:'Remote · Worldwide',remote:'Worldwide',salaryMin:60000,salaryMax:85000,tags:'React, Node.js',appliedDate:after(-3),nextAction:'Review application progress',actionDate:after(4),scores:{pay:5,remote:5,skills:4,growth:5,balance:3}},
+ {...blankJob,id:'demo3',company:'Northstar',title:'Full Stack Engineer',stage:'Saved',location:'Remote · Asia',remote:'Check eligibility',salaryMin:45000,salaryMax:65000,tags:'Next.js, PostgreSQL',priority:'High',deadline:after(3),nextAction:'Check Nepal hiring eligibility',actionDate:after(0),scores:{pay:4,remote:3,skills:5,growth:4,balance:4}},
+ {...blankJob,id:'demo4',company:'Plainwork',title:'Frontend Developer',stage:'Screening',location:'Remote · Worldwide',remote:'Worldwide',salaryMin:40000,salaryMax:55000,tags:'React, TypeScript',appliedDate:after(-4),nextAction:'Prepare examples of recent work',actionDate:after(2),scores:{pay:3,remote:5,skills:5,growth:4,balance:5}},
+ {...blankJob,id:'demo5',company:'Canopy',title:'Senior Software Engineer',stage:'Saved',location:'Remote · APAC',salaryMin:65000,salaryMax:90000,tags:'TypeScript, Node.js',deadline:after(6),scores:{pay:5,remote:3,skills:3,growth:5,balance:0}},
+].map(j=>({...j,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()} as Job));}

@@ -1,0 +1,4 @@
+import {discoveryQuerySchema,searchHimalayas} from '@/lib/discovery';
+export const dynamic='force-dynamic';
+// Public job data only. The deployed private Site's access gate protects this route.
+export async function GET(request:Request){const parsed=discoveryQuerySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));if(!parsed.success)return Response.json({error:parsed.error.issues[0].message},{status:400});try{return Response.json(await searchHimalayas(parsed.data),{headers:{'Cache-Control':'private, no-store'}})}catch(e){const timeout=e instanceof Error&&['TimeoutError','AbortError'].includes(e.name);return Response.json({error:timeout?'The job source took too long to respond. Try again or search on the source sites.':e instanceof Error&&e.message.startsWith('Himalayas')?e.message:'The live job source is unavailable right now. Try again later or search on the source sites.'},{status:503,headers:{'Cache-Control':'no-store'}})}}
